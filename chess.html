@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Catur Lengkap</title>
+<style>
+body { background:#222; display:flex; flex-direction:column; align-items:center; margin-top:20px; font-family:sans-serif; color:white; }
+#menu { width: 320px; background:#333; padding:20px; border-radius:12px; text-align:center; }
+#menu h1 { margin-bottom:20px; }
+.menu-btn { width:100%; padding:12px; margin:8px 0; background:#444; color:white; border:none; border-radius:8px; font-size:18px; cursor:pointer; }
+#board { width:320px; height:320px; display:grid; grid-template-columns:repeat(8,1fr); margin-top:20px; }
+.tile { width:40px; height:40px; display:flex; justify-content:center; align-items:center; position:relative; }
+.white { background:#eee; }
+.black { background:#777; }
+.highlight { outline: 3px solid rgba(255,255,0,0.7); box-sizing:border-box; }
+.attack { outline: 3px solid rgba(255,0,0,0.7); box-sizing:border-box; }
+.check { outline: 3px solid rgba(255,165,0,0.9); box-sizing:border-box; }
+img.piece { width:80%; height:80%; pointer-events:none; user-select:none; object-fit:contain; }
+
+#controls { 
+    margin-top:15px; 
+    display:flex; 
+    justify-content:space-between; 
+    gap: 15px; /* Jarak antar tombol (10px -> 15px) */
+    width:320px; 
+    align-items:center; 
+    flex-wrap: wrap; /* Agar tombol bisa rapi jika terlalu banyak */
+}
+#controls button { 
+    padding:8px 12px; 
+    font-size:14px; 
+    border:none; 
+    background:#444; 
+    color:white; 
+    border-radius:6px; 
+    cursor:pointer; 
+    flex-grow: 1; /* Agar tombol memiliki lebar yang sama */
+    margin-bottom: 5px; /* Jarak antar tombol */
+}
+#turn-status { 
+    padding: 8px 12px; 
+    background: #555; 
+    border-radius: 6px; 
+    font-weight: bold; 
+    text-align: center;
+}
+/* Style untuk Modal Promosi */
+#promotion-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #2b2b2b;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid #555;
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.7);
+    display: none; /* Awalnya tersembunyi */
+}
+#promotion-modal button {
+    font-size: 24px;
+    padding: 10px 15px;
+    margin: 5px;
+    background: #666;
+    border: none;
+    border-radius: 5px;
+    color: white;
+    cursor: pointer;
+}
+
+</style>
+</head>
+<body>
+ <div id="menu">
+  <h1>MENU</h1>
+  <button class="menu-btn" onclick="startGame()">PLAYER VS PLAYER</button>
+  <button class="menu-btn" onclick="startAI()">VS AI</button>
+  <button class="menu-btn" onclick="alert('COMING SOON')">SETTING</button>
+  <button class="menu-btn" onclick="alert('COMING SOON')">ABOUT</button>
+</div>
+
+<div id="board" style="display:none;"></div>
+
+<div id="controls" style="display:none;">
+  <div>
+    <button onclick="undoLast()">UNDO</button>
+    <button onclick="resetGame()">RESET</button>
+  </div>
+  <div id="turnIndicator">Turn: <strong id="turnText">White</strong></div>
+  <div id="aiToggle"></div>
+</div>
+
+<div id="status"></div>
+<div id="moves" style="display:none;"></div>
+
+<script>
+let vsAI = false;
+
+const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+let board = parseFEN(START_FEN);
+let selected = null;
+let turn = "w";
+let history = [];
+let moveList = [];
+
+function parseFEN(fen) {
+  let rows = fen.split("/");
+  let board = [];
+  for (let r = 0; r < 8; r++) {
+    let row = [];
+    let str = rows[r];
+    for (let i = 0; i < str.length; i++) {
+      let ch = str[i];
+      if (!isNaN(Number(ch))) {
+        let cnt = Number(ch);
+        for (let k = 0; k < cnt; k++) row.push(null);
+      } else {
+        row.push({ type: ch.toLowerCase(), color: ch === ch.toUpperCase() ? "w" : "b" });
+      }
+    }
+    board.push(row);
+  }
+  return board;
+}
+
+function renderBoard() {
+  const boardEl = document.getElementById("board");
+  boardEl.innerHTML = "";
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      let tile = document.createElement("div");
+      tile.className = "tile " + ((x + y) % 2 ? "black" : "white");
+      tile.dataset.x = x;
+      tile.dataset.y = y;
+      if (board[y][x]) tile.innerHTML = pieceImg(board[y][x]);
+      tile.onclick = () => handleClick(x, y);
+      boardEl.appendChild(tile);
+    }
+  }
+  highlightCheck();
+  document.getElementById("turnText").textContent = turn === "w" ? "White" : "Black";
+  document.getElementById("moves").style.display = moveList.length ? "block" : "none";
+  showMoves();
+}
+
+function pieceImg(p) {
+  const img = {
+    w:{k:"https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg", q:"https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg", r:"https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg", b:"https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg", n:"https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg", p:"https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg"},
+    b:{k:"https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg", q:"https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg", r:"https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg", b:"https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg", n:"https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg", p:"https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg"}
+  };
+  return `<img class="piece" src="${img[p.color][p.type]}">`;
+}
+
+function handleClick(x, y) {
+  clearHighlight();
+  let piece = board[y][x];
+
+  if (!selected) {
+    if (piece && piece.color === turn) {
+      selected = { x, y };
+      highlightMoves(piece, x, y);
+    }
+    return;
+  }
+
+  if (canMove(selected.x, selected.y, x, y)) {
+    makeMove(selected.x, selected.y, x, y);
+
+    // setelah move, jika posisi sendiri sedang skak => batal
+    if (isCheck(turn)) {
+      undoMove();
+      selected = null;
+      renderBoard();
+      return;
+    }
+
+    // handle pawn promotion (otomatis jadi Queen)
+    handlePromotion(x, y);
+
+    // simpan notasi sederhana ke moveList
+    moveList.push(moveToSimpleNotation(selected.x, selected.y, x, y));
+    selected = null;
+
+    turn = turn === "w" ? "b" : "w";
+
+    renderBoard();
+
+    if (vsAI && turn === "b") {
+      setTimeout(aiMove, 600);
+    }
+
+    if (isCheck(turn)) {
+      alert("SKAK!");
+      if (isCheckmate(turn)) alert("SKAKMAT!");
+    } else if (isStalemate(turn)) {
+      alert("PAT / STALEMATE (Imbang)");
+    }
+  } else {
+    // klik pada petak lain: bila ada bidak sendiri pilih ulang
+    if (piece && piece.color === turn) {
+      selected = { x, y };
+      highlightMoves(piece, x, y);
+    } else {
+      selected = null;
+      clearHighlight();
+    }
+  }
+}
+
+function clearHighlight() {
+  document.querySelectorAll(".tile").forEach(t => t.classList.remove("highlight","attack","check"));
+}
+
+function highlightMoves(piece, x, y) {
+  let moves = getLegalMoves(x, y);
+  moves.forEach(m => {
+    let t = document.querySelector(`.tile[data-x="${m.x}"][data-y="${m.y}"]`);
+    if (t) t.classList.add(m.attack ? "attack" : "highlight");
+  });
+}
+
+function highlightCheck() {
+  // highlight king yang sedang skak (jika ada)
+  for (let color of ["w","b"]) {
+    let k = findKing(color);
+    if (k && isCheck(color)) {
+      let t = document.querySelector(`.tile[data-x="${k.x}"][data-y="${k.y}"]`);
+      if (t) t.classList.add("check");
+    }
+  }
+}
+
+function getMoves(piece, x, y) {
+  let moves = [];
+  let dir = piece.color === "w" ? -1 : 1;
+
+  if (piece.type === "p") {
+    let ny = y + dir;
+    // maju 1
+    if (ny >= 0 && ny < 8 && !board[ny][x]) {
+      moves.push({ x, y: ny });
+      // 2 langkah (start)
+      let startRow = piece.color === "w" ? 6 : 1;
+      let ny2 = y + dir * 2;
+      if (y === startRow && ny2 >= 0 && ny2 < 8 && !board[ny2][x]) {
+        moves.push({ x, y: ny2 });
+      }
+    }
+    // makan diagonal
+    for (let i of [-1, 1]) {
+      let tx = x + i;
+      let ty = y + dir;
+      if (tx >= 0 && tx < 8 && ty >= 0 && ty < 8) {
+        if (board[ty][tx] && board[ty][tx].color !== piece.color) {
+          moves.push({ x: tx, y: ty, attack: true });
+        }
+      }
+    }
+    // (En passant belum di-implement)
+  }
+  else if (piece.type==="r") moves = linearMoves(x,y,piece,[[1,0],[-1,0],[0,1],[0,-1]]);
+  else if (piece.type==="b") moves = linearMoves(x,y,piece,[[1,1],[-1,1],[1,-1],[-1,-1]]);
+  else if (piece.type==="q") moves = linearMoves(x,y,piece,[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]);
+  else if (piece.type==="n"){
+    let d=[[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+    d.forEach(([dx,dy])=>{
+      let tx=x+dx,ty=y+dy;
+      if(tx>=0&&tx<8&&ty>=0&&ty<8){
+        if(!board[ty][tx]||board[ty][tx].color!==piece.color)
+          moves.push({x:tx,y:ty,attack:!!board[ty][tx]});
+      }
+    })
+  }
+  else if (piece.type==="k"){
+    let d=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+    d.forEach(([dx,dy])=>{
+      let tx=x+dx, ty=y+dy;
+      if(tx>=0&&tx<8&&ty>=0&&ty<8){
+        if(!board[ty][tx]||board[ty][tx].color!==piece.color)
+          moves.push({x:tx,y:ty,attack:!!board[ty][tx]});
+      }
+    });
+    // (Castling belum di-implement)
+  }
+
+  return moves;
+}
+
+function linearMoves(x,y,piece,dirs){
+  let out=[];
+  dirs.forEach(([dx,dy])=>{
+    let tx=x,ty=y;
+    while(true){
+      tx+=dx; ty+=dy;
+      if(tx<0||tx>=8||ty<0||ty>=8) break;
+      if(!board[ty][tx]) out.push({x:tx,y:ty});
+      else{
+        if(board[ty][tx].color!==piece.color) out.push({x:tx,y:ty,attack:true});
+        break;
+      }
+    }
+  });
+  return out;
+}
+
+function makeMove(x1,y1,x2,y2){
+  // push snapshot
+  history.push(JSON.parse(JSON.stringify(board)));
+  // move
+  board[y2][x2]=board[y1][x1];
+  board[y1][x1]=null;
+}
+
+function undoMove(){ board = history.pop() || board; }
+function undoLast(){ if(history.length>0){ board=history.pop(); turn=turn==="w"?"b":"w"; moveList.pop(); renderBoard(); } }
+
+function canMove(x1,y1,x2,y2){
+  return getLegalMoves(x1,y1).some(m=>m.x===x2&&m.y===y2);
+}
+
+function getLegalMoves(x,y){
+  let piece=board[y][x];
+  if(!piece) return [];
+  let raw=getMoves(piece,x,y);
+  let legal=[];
+  raw.forEach(m=>{
+    makeMove(x,y,m.x,m.y);
+    // cek apakah warna piece dalam keadaan skak setelah gerak
+    if(!isCheck(piece.color)) legal.push(m);
+    undoMove();
+  });
+  return legal;
+}
+
+function findKing(color){
+  for(let r=0;r<8;r++)
+    for(let c=0;c<8;c++)
+      if(board[r][c]&&board[r][c].type==="k"&&board[r][c].color===color)
+        return {x:c,y:r};
+  return null;
+}
+
+function isCheck(color){
+  const k=findKing(color);
+  if(!k) return false;
+  for(let r=0;r<8;r++)
+    for(let c=0;c<8;c++){
+      const p=board[r][c];
+      if(p&&p.color!==color){
+        let moves=getMoves(p,c,r);
+        // tidak ada filter untuk king — king juga bisa menyerang kotak berdekatan
+        if(moves.some(m=>m.x===k.x&&m.y===k.y))
+          return true;
+      }
+    }
+  return false;
+}
+
+function isCheckmate(color){
+  if(!isCheck(color)) return false;
+  for(let r=0;r<8;r++)
+    for(let c=0;c<8;c++)
+      if(board[r][c]&&board[r][c].color===color)
+        if(getLegalMoves(c,r).length>0) return false;
+  return true;
+}
+
+function isStalemate(color){
+  if(isCheck(color)) return false;
+  for(let r=0;r<8;r++)
+    for(let c=0;c<8;c++)
+      if(board[r][c]&&board[r][c].color===color)
+        if(getLegalMoves(c,r).length>0) return false;
+  return true;
+}
+
+function startGame(){
+  vsAI = false;
+  document.getElementById("menu").style.display="none";
+  document.getElementById("board").style.display="grid";
+  document.getElementById("controls").style.display="flex";
+  if (!document.getElementById("back-btn")) {
+    let backBtn = document.createElement("button");
+    backBtn.id = "back-btn";
+    backBtn.textContent = "BACK TO MENU";
+    backBtn.onclick = backToMenu;
+    document.getElementById("controls").appendChild(backBtn);
+  }
+  renderBoard();
+}
+
+function startAI(){
+  vsAI = true;
+  document.getElementById("menu").style.display="none";
+  document.getElementById("board").style.display="grid";
+  document.getElementById("controls").style.display="flex";
+  if (!document.getElementById("back-btn")) {
+    let backBtn = document.createElement("button");
+    backBtn.id = "back-btn";
+    backBtn.textContent = "BACK TO MENU";
+    backBtn.onclick = backToMenu;
+    document.getElementById("controls").appendChild(backBtn);
+  }
+  renderBoard();
+}
+
+function backToMenu() {
+    document.getElementById("board").style.display = "none";
+    document.getElementById("controls").style.display = "none";
+    document.getElementById("menu").style.display = "block";
+    board = parseFEN(START_FEN);
+    selected = null;
+    turn = "w";
+    history = [];
+    moveList = [];
+    let backBtn = document.getElementById("back-btn");
+    if (backBtn) backBtn.remove();
+    renderBoard();
+}
+
+function aiMove() {
+  let allMoves = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      let p = board[r][c];
+      if (p && p.color === "b") {
+        let moves = getLegalMoves(c, r);
+        moves.forEach(m => {
+          allMoves.push({ x1: c, y1: r, x2: m.x, y2: m.y });
+        });
+      }
+    }
+  }
+  if (allMoves.length === 0) return;
+  // pilih random (sederhana)
+  let move = allMoves[Math.floor(Math.random() * allMoves.length)];
+  makeMove(move.x1, move.y1, move.x2, move.y2);
+  handlePromotion(move.x2, move.y2);
+  moveList.push(moveToSimpleNotation(move.x1, move.y1, move.x2, move.y2));
+  turn = "w";
+  renderBoard();
+}
+
+function handlePromotion(x, y) {
+  let p = board[y][x];
+  if (!p || p.type !== "p") return;
+  if ((p.color === "w" && y === 0) || (p.color === "b" && y === 7)) {
+    // promosi otomatis ke queen
+    board[y][x] = { type: "q", color: p.color };
+  }
+}
+
+function resetGame() {
+  board = parseFEN(START_FEN);
+  history = [];
+  selected = null;
+  turn = "w";
+  moveList = [];
+  renderBoard();
+}
+
+function moveToSimpleNotation(x1,y1,x2,y2){
+  // notasi sederhana: e2e4 style
+  return `${coordToAlg(x1,y1)} -> ${coordToAlg(x2,y2)}`;
+}
+function coordToAlg(x,y){
+  const files = "abcdefgh";
+  return files[x] + (8 - y);
+}
+
+function showMoves(){
+  const el = document.getElementById("moves");
+  el.innerHTML = moveList.map((m,i)=>`${i+1}. ${m}`).join("<br>");
+}
+
+/* initial render */
+renderBoard();
+
+</script>
+</body>
+  </html>
